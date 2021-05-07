@@ -20,7 +20,7 @@ def sort_filtration_by_dim(filtration, maxdim=None):
         dim = len(v_t) - 1
         if dim <= maxdim:
             filtration_by_dim[dim].append([idx, v_t])
-    
+
     for dim, filtr in enumerate(filtration_by_dim):
         filtration_by_dim[dim] = [np.asarray(x, dtype=np.int64)
                                   for x in zip(*filtr)]
@@ -88,7 +88,7 @@ def _reduce_single_dim(dim):
 
             reduced, triangular, pos_idxs_to_clear = _twist_reduction(
                 reduced, triangular, pivots_lookup, idxs_next_dim
-                )
+            )
 
         return spx2idx_dim, reduced, triangular, pos_idxs_to_clear
 
@@ -109,7 +109,7 @@ def get_reduced_triangular(filtr_by_dim):
             pos_idxs_to_clear,
             idxs_next_dim=idxs_next_dim,
             tups_next_dim=tups_next_dim
-            )
+        )
         spx2idx_idxs_reduced_triangular.append((spx2idx_dim,
                                                 idxs_dim[::-1],
                                                 reduced,
@@ -121,7 +121,7 @@ def get_reduced_triangular(filtr_by_dim):
         idxs_dim,
         tups_dim,
         pos_idxs_to_clear
-        )
+    )
     spx2idx_idxs_reduced_triangular.append((spx2idx_dim,
                                             idxs_dim[::-1],
                                             reduced,
@@ -200,14 +200,14 @@ def get_barcode(N, spx2idx_idxs_reduced_triangular,
 
 def get_coho_reps(N, barcode, spx2idx_idxs_reduced_triangular):
     coho_reps = []
-    
+
     _, idxs_0, _, triangular_0 = spx2idx_idxs_reduced_triangular[0]
     coho_reps_0 = []
     for pair in barcode[0]:
         idx = np.flatnonzero(idxs_0 == N - 1 - pair[0])[0]
         coho_reps_0.append([N - 1 - x for x in triangular_0[idx]])
     coho_reps.append(coho_reps_0)
-    
+
     for dim in range(1, len(barcode)):
         barcode_dim = barcode[dim]
         _, idxs_dim, _, triangular_dim = spx2idx_idxs_reduced_triangular[dim]
@@ -223,7 +223,7 @@ def get_coho_reps(N, barcode, spx2idx_idxs_reduced_triangular):
             else:
                 idx = np.flatnonzero(idxs_dim == N - 1 - pair[0])[0]
                 coho_reps_dim.append([N - 1 - x for x in triangular_dim[idx]])
-                
+
         coho_reps.append(coho_reps_dim)
 
     return coho_reps
@@ -232,9 +232,56 @@ def get_coho_reps(N, barcode, spx2idx_idxs_reduced_triangular):
 @njit
 def _tuple_in_dict(tup, d):
     return tup in d
-    
 
-def STSQ(length, cocycle, filtration):
+
+@njit
+def _set2tuple(as_set):
+    as_list = sorted(list(as_set))
+    as_array = np.asarray(as_list, dtype=np.int64)
+    return to_fixed_tuple(as_array, length)
+
+
+@njit
+def STSQ(k, dim, cocycle, filtration):
+    """int : length - dict : cocycle - list;tuple;int : filtration"""
+    answer = set()
+    r = len(cocycle)
+    length = dim + 1 + k
+    bar_length = 2 * dim - length
+
+    for i in range(r):
+        for j in range(i, r):
+            a, b = set(cocycle[i]), set(cocycle[j])
+            u = a.union(b)
+            if len(u) == length:
+                u_tuple = _set2tuple(u, length)
+                if _tuple_in_dict(u_tuple, filtration):
+                    a_bar, b_bar = a.difference(b), b.difference(a)
+                    u_bar = _set2tuple(a_bar.union(b_bar), bar_length)
+                    index = {}
+                    for v in u_bar:
+                        pos = u_tuple.index(v)
+                        pos_bar = u_bar.index(v)
+                        index[v] = (pos + pos_bar) % 2
+
+                    indices_a = list()
+                    for v in a_bar:
+                        indices_a.append(index[v])
+                    index_a = set(indices_a)
+
+                    indices_b = list()
+                    for w in b_bar:
+                        indices_b.append(index[w])
+                    index_b = set(indices_b)
+
+                    if (index_a == {0} and index_b == {1}
+                            or index_a == {1} and index_b == {0}):
+                        answer ^= {u_tuple}
+
+    return answer
+
+
+def STSQ_old(length, cocycle, filtration):
     """..."""
     answer = set()
     for pair in combinations(cocycle, 2):
@@ -273,13 +320,13 @@ def get_steenrod_matrix(k, coho_reps, filtration,
                         spx2idx_idxs_reduced_triangular):
     steenrod_matrix = [list()] * k
     for dim, coho_reps_dim in enumerate(coho_reps[:-1]):
-        length = dim + 1 + k
         steenrod_matrix.append(List.empty_list(types.List(types.int64)))
         for i, rep in enumerate(coho_reps_dim):
             cocycle = [filtration[-1 - j] for j in rep]
             spx2idx_dim_plus_k, idxs_dim_plus_k, _, _ = \
                 spx2idx_idxs_reduced_triangular[dim + k]
-            cochain = STSQ(length, cocycle, spx2idx_dim_plus_k)
+
+            cochain = STSQ(k, dim, cocycle, spx2idx_dim_plus_k)
             if cochain:
                 _populate_st_mat(steenrod_matrix[dim + k],
                                  cochain,
@@ -287,7 +334,7 @@ def get_steenrod_matrix(k, coho_reps, filtration,
                                  spx2idx_dim_plus_k)
             else:
                 _populate_st_mat_with_empty(steenrod_matrix[dim + k])
-        
+
     return steenrod_matrix
 
 
@@ -359,8 +406,8 @@ def get_steenrod_barcode(k, steenrod_matrix, spx2idx_idxs_reduced_triangular,
                         reduced_prev_dim,
                         births_dim,
                         N
-                        )
-                    ])
+                    )
+                ])
             else:
                 st_barcode.append([])
 
@@ -380,18 +427,18 @@ def get_steenrod_barcode(k, steenrod_matrix, spx2idx_idxs_reduced_triangular,
                         reduced_prev_dim,
                         births_dim,
                         N
-                        )
-                    ])
+                    )
+                ])
             else:
                 st_barcode.append([])
 
     return st_barcode
-                        
+
 
 def barcodes(
         k, filtration, homology=False, filtration_values=None,
         return_filtration_values=False, maxdim=None
-        ):
+):
     """Serves as the main function"""
     tic = time.time()
     N = len(filtration)
@@ -418,11 +465,11 @@ def barcodes(
         barcode = to_homology_barcode(
             barcode, N, filtration_values=filtration_values,
             return_filtration_values=return_filtration_values
-            )
+        )
         st_barcode = to_homology_barcode(
             st_barcode, N, filtration_values=filtration_values,
             return_filtration_values=return_filtration_values
-            )
+        )
 
         return barcode, st_barcode
 
@@ -455,12 +502,12 @@ def to_homology_barcode(rel_coho_barcode, N, filtration_values=None,
                 if pair[1] == np.inf:
                     hom_barcode_dim.append(
                         (filtration_values[N - 1 - pair[0]], np.inf)
-                        )
+                    )
                 else:
                     hom_barcode[dim - 1].append(
                         (filtration_values[N - 1 - pair[1]],
                          filtration_values[N - 1 - pair[0]])
-                        )
+                    )
             hom_barcode.append(hom_barcode_dim)
 
     return hom_barcode
@@ -492,7 +539,7 @@ def check_agreement_with_gudhi(gudhi_barcode, barcode):
     for dim, barcode_dim in enumerate(barcode):
         gudhi_barcode_dim = sorted([
             pers_info[1] for pers_info in gudhi_barcode if pers_info[0] == dim
-            ])
+        ])
         assert gudhi_barcode_dim == sorted(barcode_dim), \
             f"Disagreement in degree {dim}"
 
